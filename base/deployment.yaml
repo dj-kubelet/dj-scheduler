@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: dj-scheduler
+  name: dj-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dj-scheduler
+  template:
+    metadata:
+      labels:
+        app: dj-scheduler
+    spec:
+      serviceAccountName: dj-scheduler
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65535
+        runAsGroup: 65535
+        fsGroup: 65535
+
+      containers:
+      - image: djkubelet/dj-scheduler:latest
+        name: dj-scheduler
+        env:
+        - name: SCHEDULER_NAME
+          value: dj-scheduler
+        - name: SLEEP_INTERVAL
+          value: "2"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 1000Mi
+          requests:
+            cpu: 10m
+            memory: 20Mi
+        volumeMounts:
+        - name: tmpfs
+          mountPath: /tmp
+        - name: kubectl-cache
+          mountPath: /.kube
+
+      volumes:
+      - name: tmpfs
+        emptyDir:
+          medium: Memory
+      - name: kubectl-cache
+        emptyDir:
+          medium: Memory

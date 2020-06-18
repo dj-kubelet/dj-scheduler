@@ -1,0 +1,105 @@
+#!/bin/bash
+set -euo pipefail
+
+SCHEDULER_NAME="dj-scheduler"
+SLEEP_INTERVAL="2"
+
+main() {
+    #local namespace="default"
+    echo "Scheduling pods as $SCHEDULER_NAME every $SLEEP_INTERVAL seconds."
+    while true; do
+        sleep "$SLEEP_INTERVAL"
+        namespaces=$(kubectl get namespace --output=json | jq -cr '.items[].metadata.name')
+        echo "Checking namespaces for $SCHEDULER_NAME pods: $(paste -sd ',' - <<<"$namespaces")"
+        for namespace in $namespaces; do
+            namespaced_schedule "$namespace"
+        done
+    done
+}
+
+echo_err() {
+    echo >&2 "$@"
+}
+
+namespaced_schedule() {
+    local namespace="$1"
+    pods=$(get_pods "$namespace")
+    n_running="$(pods_in_phase "Running" <<<"$pods")"
+    n_pending="$(pods_in_phase "Pending" <<<"$pods")"
+    #echo_err ">>> ns=$namespace Running pods: $n_running"
+
+    if [ "$n_running" == "0" ] && [ "$n_pending" != "0" ]; then
+        echo_err ">>> ns=$namespace Pending pods: $n_pending"
+        pod="$(pod_in_phase "Pending" <<<"$pods")"
+        if [ "$pod" != "null" ]; then
+            schedule_pod "$pod"
+        fi
+    fi
+
+}
+
+get_pods() {
+    local namespace="$1"
+    kubectl get pods --namespace "$namespace" --output=json \
+        --field-selector="spec.schedulerName=$SCHEDULER_NAME" |
+        jq -cr '.items'
+}
+
+pod_in_phase() {
+    local phase="$1"
+    jq -cr "[.[] | select(.status.phase == \"$phase\")] | first"
+}
+
+pods_in_phase() {
+    local phase="$1"
+    jq -cr "[.[] | select(.status.phase == \"$phase\")] | length"
+}
+
+schedule_pod() {
+    local pod=$1
+    local node
+    # Don't schedule if it has a node assigned.
+    if [ "$(jq -r '.spec.nodeName == null' <<<"$pod")" == "false" ]; then
+        return
+    fi
+    name=$(jq -r '.metadata.name' <<<"$pod")
+    node="$(get_node "$pod")"
+    bind_pod "$node" "$pod"
+    echo "Scheduled: $name on $node"
+}
+
+get_node() {
+    local pod=$1
+    # Pick random node
+    # TODO avoid tainted nodes
+    kubectl get nodes --output=json |
+        jq -r '.items[].metadata.name' |
+        shuf -n1
+}
+
+bind_pod() {
+    local node=$1
+    local pod=$2
+    local namespace
+    namespace=$(jq -r '.metadata.namespace' <<<"$pod")
+    local name
+    name=$(jq -r '.metadata.name' <<<"$pod")
+    kubectl create \
+        --raw "/api/v1/namespaces/${namespace}/pods/${name}/binding" \
+        -f - >/dev/null <<EOF
+{
+  "apiVersion": "v1",
+  "kind": "Binding",
+  "metadata": {
+    "name": "$name"
+  },
+  "target": {
+    "apiVersion": "v1",
+    "kind": "Node",
+    "name": "$node"
+  }
+}
+EOF
+}
+
+main
