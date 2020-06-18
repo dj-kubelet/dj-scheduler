@@ -3,7 +3,7 @@ Makes sure only on pod at a time can run in each namespace.
 
 ## Deploy
 
-```
+```bash
 docker build -t dj-scheduler .
 kind load docker-image --name dj-kubelet dj-scheduler
 
